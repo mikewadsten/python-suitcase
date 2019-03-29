@@ -3,14 +3,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
 # Copyright (c) 2019 Digi International Inc. All Rights Reserved.
-import sys
 import os
+import sys
+
 import six
+from six import BytesIO
+
 from suitcase.exceptions import SuitcaseException, \
     SuitcasePackException, SuitcaseParseError
 from suitcase.fields import FieldArray, FieldPlaceholder, CRCField, SubstructureField, \
     ConditionalField, FieldAccessor, FieldProperty
-from six import BytesIO
 
 
 class ParseError(Exception):
@@ -63,12 +65,11 @@ class Packer(object):
         stream = BytesIO(data)
         self.unpack_stream(stream)
         stream.tell()
-        if trailing:
-            return stream
-        elif stream.tell() != len(data):
+        if not trailing and stream.tell() != len(data):
             raise SuitcaseParseError("Structure fully parsed but additional bytes remained.  Parsing "
                                      "consumed %d of %d bytes" %
                                      (stream.tell(), len(data)))
+        return stream
 
     def unpack_stream(self, stream):
         """Unpack bytes from a stream of data field-by-field
@@ -106,7 +107,7 @@ class Packer(object):
                 # We need to fast forward by as much as was consumed by the structure
                 stream.seek(stream.tell() + consumed)
                 continue
-            elif length is None:
+            elif length is None and field.is_greedy:
                 if isinstance(field, FieldArray) and field.num_elements is not None:
                     # Read the data greedily now, and we'll backtrack after enough elements have been read.
                     data = stream.read()
@@ -115,7 +116,7 @@ class Packer(object):
                     break
             else:
                 data = stream.read(length)
-                if len(data) != length:
+                if len(data) != length and length is not None:
                     raise SuitcaseParseError("While attempting to parse field "
                                              "%r we tried to read %s bytes but "
                                              "we were only able to read %s." %
@@ -123,6 +124,8 @@ class Packer(object):
 
             try:
                 unused_data = field.unpack(data)
+                if hasattr(unused_data, "read"):
+                    unused_data = unused_data.read()
                 stream.seek(-len(unused_data or ""), os.SEEK_CUR)
             except SuitcaseException:
                 raise  # just re-raise these
@@ -144,8 +147,12 @@ class Packer(object):
                     crc_fields.append(
                         (field, -inverted_stream.tell() - field.bytes_required))
                 length = field.bytes_required
+                if length is None and field.is_greedy:
+                    raise SuitcaseParseError(
+                            "Multiple greedy fields unsupported (%r and %r)"
+                            % (_name, name))
                 data = inverted_stream.read(length)[::-1]
-                if len(data) != length:
+                if len(data) != length and length is not None:
                     raise SuitcaseParseError("While attempting to parse field "
                                              "%r we tried to read %s bytes but "
                                              "we were only able to read %s." %

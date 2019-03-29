@@ -83,6 +83,7 @@ class BaseField(object):
     def __init__(self, *args, **kwargs):
         self._value = None
         self._parent = kwargs.get('parent')
+        self.is_greedy = False
 
     def _ph2f(self, placeholder):
         """Lookup a field given a field placeholder"""
@@ -191,7 +192,7 @@ class CRCField(BaseField):
         stream.write(b'\x00' * self.field.bytes_required)
 
     def unpack(self, data, **kwargs):
-        self.field.unpack(data, **kwargs)
+        return self.field.unpack(data, **kwargs)
 
 
 class Magic(BaseField):
@@ -216,6 +217,7 @@ class Magic(BaseField):
             raise SuitcaseParseError(
                 "Expected sequence %r for magic field but got %r on "
                 "message %r" % (self.expected_sequence, data, self._parent))
+        return b''
 
     def __repr__(self):
         return "Magic(%r)" % (self.expected_sequence,)
@@ -286,7 +288,7 @@ class FieldProperty(BaseField):
         self.field.setval(onset(value))
 
     def unpack(self, data, **kwargs):
-        pass
+        return data
 
     def pack(self, stream):
         pass
@@ -369,11 +371,18 @@ class DispatchTarget(BaseField):
         possible values for this field act as the keys for the dispatch.
     :param dispatch_mapping: This is a dictionary mapping dispatch_field
         values to associated message types to handle the remaining processing.
+    :param greedy: True if the resulting structure is expected to represent
+        the entirety of the rest of the message. Since this value defaults to
+        True, you will need to set this to False if your structure contains
+        multiple DispatchTarget fields, or a DispatchTarget followed by a
+        Payload which has no length provider.
+        Note that when marking a DispatchTarget as non-greedy,
+        all nested DispatchTargets must also be non-greedy.
 
     """
 
     def __init__(self, length_provider, dispatch_field,
-                 dispatch_mapping, **kwargs):
+                 dispatch_mapping, greedy=True, **kwargs):
         BaseField.__init__(self, **kwargs)
         if length_provider is None:
             self.length_provider = None
@@ -384,6 +393,7 @@ class DispatchTarget(BaseField):
         self.dispatch_mapping = dispatch_mapping
         self.inverse_dispatch_mapping = dict((v, k) for (k, v)
                                              in dispatch_mapping.items())
+        self.is_greedy = greedy
 
     def _lookup_msg_type(self):
         target_key = self.dispatch_field.getval()
@@ -429,7 +439,7 @@ class DispatchTarget(BaseField):
                                      " contained in mapping")
         message_instance = target_msg_type()
         self.setval(message_instance)
-        self._value.unpack(data)
+        return self._value.unpack(data, trailing=not self.is_greedy)
 
 
 class LengthField(BaseField):
@@ -652,6 +662,7 @@ class ConditionalField(BaseField):
     def unpack(self, data, **kwargs):
         if self.condition(self._parent):
             return self.field.unpack(data, **kwargs)
+        return BytesIO(data)
 
     def getval(self):
         if not self.condition(self._parent):
@@ -692,6 +703,7 @@ class Payload(BaseField):
             self.length_provider.associate_length_consumer(self)
         else:
             self.length_provider = None
+            self.is_greedy = True
 
     @property
     def bytes_required(self):
@@ -705,6 +717,7 @@ class Payload(BaseField):
 
     def unpack(self, data, **kwargs):
         self._value = data
+        return b''
 
 
 # keep for backwards compatibility
@@ -739,6 +752,7 @@ class BaseVariableByteSequence(BaseField):
             self._value = struct.unpack(sfmt, data)
         except struct.error as e:
             raise SuitcasePackStructException(e)
+        return b''
 
 
 class DependentField(BaseField):
@@ -790,7 +804,7 @@ class DependentField(BaseField):
         pass
 
     def unpack(self, data, **kwargs):
-        pass
+        return data
 
     def getval(self):
         return self._get_parent_field().getval()
@@ -963,6 +977,7 @@ class BaseFixedByteSequence(BaseField):
     def unpack(self, data, **kwargs):
         try:
             self._value = struct.unpack(self.format, data)
+            return b''
         except struct.error as e:
             raise SuitcasePackStructException(e)
 
@@ -1028,6 +1043,7 @@ class BaseStructField(BaseField):
             for i, byte in enumerate(struct.unpack(self.UNPACK_FORMAT, data)):
                 value |= (byte << (i * 8))
         self._value = value
+        return b''
 
 
 # ==============================================================================
@@ -1464,6 +1480,7 @@ class BitField(BaseField):
             mask = (2 ** field.size - 1)
             fval = (value >> shift) & mask
             field.setval(fval)
+        return b''
 
 
 class FieldAccessor(BaseField):
@@ -1520,4 +1537,4 @@ class FieldAccessor(BaseField):
         pass
 
     def unpack(self, data, **kwargs):  # pragma: no cover
-        pass
+        return data

@@ -1309,5 +1309,58 @@ class TestFieldAccessorMultiple(unittest.TestCase):
         self.assertEqual(s.pack(), b'\xCA\xFF\xFE')
 
 
+class MultipleGreedy(Structure):
+    which = DispatchField(UBInt8())
+    dispatch = DispatchTarget(None, which, {
+        0: Structure8,
+        1: Structure16,
+    })
+    payload = Payload()
+
+
+class TestMultipleGreedyFieldsNotAllowed(unittest.TestCase):
+    def test_error_when_parsing_structure_with_multiple_greedy_fields(self):
+        self.assertRaises(SuitcaseParseError,
+                          MultipleGreedy.from_data,
+                          b'\x00\x11hello')
+
+
+class NongreedyDispatchBeforePayload(Structure):
+    which = DispatchField(UBInt8())
+    dispatch = DispatchTarget(None, which, {
+        0: Structure16,
+        1: Structure32,
+    }, greedy=False)
+    payload = Payload()
+
+
+class TestDispatchBeforePayload(unittest.TestCase):
+    def test_unpack(self):
+        s = NongreedyDispatchBeforePayload.from_data(
+                b'\x00\x11\x22Hello world')
+        self.assert_(isinstance(s.dispatch, Structure16))
+        self.assertEqual(s.dispatch.value, 0x1122)
+        self.assertEqual(s.payload, b'Hello world')
+
+        s = NongreedyDispatchBeforePayload.from_data(
+                b'\x01\x12\x34\x56\x78Goodbye')
+        self.assert_(isinstance(s.dispatch, Structure32))
+        self.assertEqual(s.dispatch.value, 0x12345678)
+        self.assertEqual(s.payload, b'Goodbye')
+
+    def test_assignment(self):
+        s = NongreedyDispatchBeforePayload(
+                payload=b'Yeehaw',
+                dispatch=Structure32(value=1))
+        self.assertEqual(s.which, 1)
+        self.assertEqual(s.pack(), b'\x01\x00\x00\x00\x01Yeehaw')
+
+        s.payload = b'This is nice'
+        self.assertEqual(s.pack(), b'\x01\x00\x00\x00\x01This is nice')
+
+        s.dispatch = Structure16(value=2)
+        self.assertEqual(s.pack(), b'\x00\x00\x02This is nice')
+
+
 if __name__ == "__main__":
     unittest.main()
