@@ -1362,5 +1362,39 @@ class TestDispatchBeforePayload(unittest.TestCase):
         self.assertEqual(s.pack(), b'\x00\x00\x02This is nice')
 
 
+class MultipleNongreedy(Structure):
+    bits = BitField(8, top=BitBool(), rest=BitNum(7))
+    first = DispatchTarget(None, bits.top, {
+        True: Structure32,
+        False: Structure8,
+    }, greedy=False)
+    option = DispatchField(UBInt8())
+    second = DispatchTarget(None, option, {
+        0: Structure16,
+        1: MySimpleFixedPayload,
+    }, greedy=False)
+    remainder = Payload()
+
+
+class TestMultipleNongreedy(unittest.TestCase):
+    def test_unpack(self):
+        m = MultipleNongreedy.from_data(b'\x80\x11\x22\x33\x44\x00\x55\x66aa')
+        self.assert_(isinstance(m.first, Structure32))
+        self.assertEqual(m.first.value, 0x11223344)
+        self.assert_(isinstance(m.second, Structure16))
+        self.assertEqual(m.second.value, 0x5566)
+        self.assertEqual(m.remainder, b'aa')
+
+    def test_pack(self):
+        m = MultipleNongreedy(first=Structure8(value=8),
+                              second=MySimpleFixedPayload(number=1),
+                              remainder=b'How do you do')
+        self.assertEqual(m.pack(),
+                         b'\x00\x08\x01\x00\x00\x00\x01How do you do')
+
+
+# TODO: Nested (inner) non-greedy structures/dispatch targets.
+
+
 if __name__ == "__main__":
     unittest.main()
