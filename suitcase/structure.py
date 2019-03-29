@@ -12,7 +12,7 @@ from six import BytesIO
 from suitcase.exceptions import SuitcaseException, \
     SuitcasePackException, SuitcaseParseError
 from suitcase.fields import FieldArray, FieldPlaceholder, CRCField, SubstructureField, \
-    ConditionalField, FieldAccessor, FieldProperty
+    ConditionalField, FieldAccessor, FieldProperty, Payload
 
 
 class ParseError(Exception):
@@ -148,9 +148,18 @@ class Packer(object):
                         (field, -inverted_stream.tell() - field.bytes_required))
                 length = field.bytes_required
                 if length is None and field.is_greedy:
-                    raise SuitcaseParseError(
-                            "Multiple greedy fields unsupported (%r and %r)"
+                    # Try to give the user a tip on how to fix this.
+                    if not isinstance(field, Payload):
+                        hint = "Should %r be non-greedy?" % _name
+                    elif not isinstance(greedy_field, Payload):
+                        hint = "Should %r be non-greedy?" % name
+                    else:
+                        raise SuitcaseParseError(
+                            "Multiple greedy Payload fields (%r and %r)"
                             % (_name, name))
+                    raise SuitcaseParseError(
+                            ("Multiple greedy fields unsupported (%r and %r)."
+                             " Hint: " + hint) % (_name, name))
                 data = inverted_stream.read(length)[::-1]
                 if len(data) != length and length is not None:
                     raise SuitcaseParseError("While attempting to parse field "
